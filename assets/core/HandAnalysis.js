@@ -9,7 +9,7 @@
  * 这个近似是偏保守的（真实值可能比它小），但方向正确：
  * 缺门牌越多，越优先打缺，和川麻的实际打法一致。
  */
-import { TILE_LABELS, SUIT_OFFSET, TILE_TYPES } from './constants.js';
+import { SUITS, TILE_LABELS, SUIT_OFFSET, TILE_TYPES } from './constants.js';
 
 export const TILE_CODES = Object.keys(TILE_LABELS);
 const INDEX = new Map(TILE_CODES.map((code, index) => [code, index]));
@@ -166,6 +166,122 @@ export function effectiveDraws(handAfterDiscard, visibleTiles = [], exposedMelds
     }
   });
   return { shanten: base, usefulTiles, remainingCount };
+}
+
+/**
+ * 听口枚举：0 向听时，摸到哪些牌能直接胡。
+ *
+ * 用枚举，不估。27 种牌逐个试，能胡的才收。
+ * remaining 扣掉自己手里和场上已见的，所以「听死口」会自然显示只剩 1 张。
+ */
+export function waits(tiles, exposedMelds = 0, missingSuit = null, visibleTiles = []) {
+  const base = shanten(tiles, exposedMelds, missingSuit);
+  if (base !== 0) return [];
+  const known = tileCounts([...tiles, ...visibleTiles]);
+  const range = missingRange(missingSuit);
+  const out = [];
+  for (const [code, idx] of INDEX) {
+    if (known[idx] >= 4) continue;
+    if (range && idx >= range[0] && idx < range[1]) continue;
+    const next = tiles.concat([code]);
+    if (shanten(next, exposedMelds, missingSuit) === -1) {
+      out.push({ tile: code, remaining: 4 - known[idx] });
+    }
+  }
+  return out;
+}
+
+/** 听口质量：能胡的牌一共还剩几张活口 */
+export function waitQuality(tiles, exposedMelds = 0, missingSuit = null, visibleTiles = []) {
+  return waits(tiles, exposedMelds, missingSuit, visibleTiles)
+    .reduce((sum, w) => sum + w.remaining, 0);
+}
+
+/** 各花色张数，缺门那门记 0 */
+export function suitProfile(tiles, missingSuit = null) {
+  const counts = tileCounts(tiles);
+  const out = { m: 0, p: 0, s: 0 };
+  for (const suit of SUITS) {
+    const off = SUIT_OFFSET[suit];
+    if (missingSuit === suit) continue;
+    let n = 0;
+    for (let i = off; i < off + PER_SUIT; i += 1) n += counts[i];
+    out[suit] = n;
+  }
+  return out;
+}
+
+/** 对子 + 刻子的总组数（每种牌算一组） */
+export function pairGroups(tiles) {
+  const counts = tileCounts(tiles);
+  return counts.filter((c) => c >= 2).length;
+}
+
+/** 刻子数（3 张及以上） */
+export function tripletGroups(tiles) {
+  const counts = tileCounts(tiles);
+  return counts.filter((c) => c >= 3).length;
+}
+
+/**
+ * 清一色代价核算。
+ *
+ * 关键在「代价」怎么算：把异色牌全打掉，每打一张要消耗一轮摸打，
+ * 所以纯色向听 = 只留主色的向听 + 异色张数。
+ * 多一向听大约损失一半胡牌率，但清一色是平胡的 4 倍，多一向听以内都值。
+ */
+export function pureSuitPlan(tiles, exposedMelds = 0, missingSuit = null) {
+  const prof = suitProfile(tiles, missingSuit);
+  const entries = Object.entries(prof).filter(([, n]) => n > 0);
+  if (entries.length < 2) return null;              // 已经是单色，不用规划
+  entries.sort((a, b) => b[1] - a[1]);
+  const [mainSuit, mainCount] = entries[0];
+  const offCount = entries.slice(1).reduce((n, [, c]) => n + c, 0);
+  if (mainCount < 7 || offCount < 1) return null;   // 主色不够多，做了也是空
+
+  const now = shanten(tiles, exposedMelds, missingSuit);
+  const pureTiles = tiles.filter((t) => t.at(-1) === mainSuit);
+  const pureShanten = shanten(pureTiles, exposedMelds, missingSuit) + offCount;
+
+  return {
+    suit: mainSuit,
+    mainCount,
+    offCount,
+    now,
+    pureShanten,
+    delta: pureShanten - now,
+    // 只判断「结构上够不够格」，不在这里纠结向听代价。
+    // 早期版本用「已听牌就不做」，但川麻定缺后主色 ≥9 张时基本都在听牌边缘，
+    // 那个条件等于永久关闭。真正的权衡交给 DecisionEngine.compare：
+    // 向听差 ≥2 时牌效优先，差 <2 时才让方向说话。
+    worth: mainCount >= 9 && offCount <= 4,
+  };
+}
+
+/** 对对胡可行性：刻子 + 对子已经够多才算，不够就不瞎猜 */
+export function tripletsPlan(tiles, exposedMelds = 0, missingSuit = null) {
+  if (countMissing(tiles, missingSuit) > 0) return null;
+  const triplets = tripletGroups(tiles);
+  const pairs = pairGroups(tiles);
+  const groups = triplets + exposedMelds;
+  // 至少 4 组成型/半成型，才值得往对对胡走
+  if (triplets + pairs < 5 || groups >= 4) return null;
+  return {
+    triplets,
+    pairs,
+    groups,
+    need: 4 - groups,
+    usablePairs: Math.min(pairs, 4 - groups),
+  };
+}
+
+/** 七对可行性：无副露、对子够多 */
+export function sevenPairsPlan(tiles, exposedMelds = 0, missingSuit = null) {
+  if (exposedMelds > 0) return null;
+  if (countMissing(tiles, missingSuit) > 0) return null;
+  const pairs = pairGroups(tiles);
+  if (pairs < 5) return null;
+  return { pairs, need: 7 - pairs };
 }
 
 export function clearShantenCache() { shantenCache.clear(); }

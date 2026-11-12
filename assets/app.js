@@ -6,7 +6,7 @@ import { DecisionEngine } from './core/DecisionEngine.js';
 import { EventStore } from './core/EventStore.js';
 import { GameStateEngine } from './core/GameStateEngine.js';
 import { RulesEngine } from './core/RulesEngine.js';
-import { EVENT_LABELS, INITIAL_HAND, MISSING_OPTIONS, PLAYER_LABELS, TILE_LABELS, tileGlyph, tileLabel } from './core/constants.js';
+import { EVENT_LABELS, INITIAL_HAND, MISSING_OPTIONS, PLAYER_LABELS, SUIT_CN, TILE_LABELS, tileGlyph, tileLabel } from './core/constants.js';
 
 const app = document.querySelector('#app');
 const APP_BASE = new URL('../', import.meta.url).pathname;
@@ -191,8 +191,12 @@ function renderPlay() {
     // 必须打标记：startGame 会触发 store 订阅 -> 又回到 renderPlay，不打标记就递归爆栈。
     if (!demoBooted && new URLSearchParams(location.search).get('demo')) {
       demoBooted = true;
-      game.startGame({ tiles: INITIAL_HAND, rules: rulesEngine.profile.id, seat: 'east', dealer: 'self', missingSuit: setup.missingSuit });
-      game.recordDraw('5p');
+      // demo=2 用一手 11 万 + 2 筒，能触发清一色方向
+      const demoHand = new URLSearchParams(location.search).get('demo') === '2'
+        ? ['1m','1m','2m','3m','4m','5m','6m','7m','8m','9m','1m','1p','2p']
+        : INITIAL_HAND;
+      game.startGame({ tiles: demoHand, rules: rulesEngine.profile.id, seat: 'east', dealer: 'self', missingSuit: setup.missingSuit });
+      game.recordDraw('2m');
       state = game.getState();
     } else if (!demoBooted) { navigate('/setup'); return; }
     else { state = game.getState(); }
@@ -227,8 +231,33 @@ function playerSeat(player, state) {
   const out = (state.outPlayers || []).includes(player);
   return `<div class="player-seat seat-${player} ${state.currentPlayer === player ? 'current' : ''} ${out ? 'out' : ''}"><span class="player-name"><i></i>${PLAYER_LABELS[player]}${out ? '<em class="out-tag">已胡</em>' : ''}</span><div class="mini-river">${discards.length ? discards.slice(-6).map((item) => `<span title="${tileLabel(item.tile)}">${tileGlyph(item.tile)}</span>`).join('') : `<small>${out ? '血战中已退出' : '等待出牌'}</small>`}</div></div>`;
 }
+function planLabel(plan) {
+  if (!plan || plan.kind === 'NORMAL') return '';
+  if (plan.kind === 'PURE') return `清一色 · ${SUIT_CN[plan.suit] || ''}${plan.mainCount}张`;
+  if (plan.kind === 'SEVEN') return `七对 · ${plan.pairs}对`;
+  if (plan.kind === 'TRIPLETS') return `对对胡 · ${plan.triplets}刻${plan.pairs}对`;
+  return '';
+}
+
 function recommendationCard(rec) {
-  return `<section class="recommendation-card"><div class="recommend-top"><span class="section-kicker">推荐出牌 · 攻守平衡</span><span class="risk-badge">${rec.risk}</span></div><div class="recommend-main"><span class="hero-tile">${tileGlyph(rec.tile)}</span><div><h2>${tileLabel(rec.tile)}</h2><b>${rec.physicalPosition.text}</b></div></div><div class="decision-meta"><span><small>向听</small><b>${rec.shanten}</b></span><span><small>有效牌</small><b>${rec.usefulTiles.length} 种</b></span><span><small>未见有效牌</small><b>${rec.remainingCount} 张</b></span></div><button class="why-btn" id="why">为什么？</button></section>`;
+  const tag = planLabel(rec.plan);
+  // 听牌时「活口」比「有效牌种类」有意义得多 —— 一个死口只剩 1 张，跟两面 6 张不是一回事
+  const quality = rec.shanten === 0
+    ? `<span><small>活口</small><b>${rec.waitQuality || 0} 张</b></span>`
+    : `<span><small>有效牌</small><b>${rec.usefulTiles.length} 种</b></span>`;
+  const readLine = rec.reads
+    ? Object.entries(rec.reads)
+        .filter(([, r]) => r && r.suit && r.confidence >= 0.55)
+        .map(([actor, r]) => `${PLAYER_LABELS[actor]}缺${SUIT_CN[r.suit]}`)
+        .join(' · ')
+    : '';
+  return `<section class="recommendation-card">
+    <div class="recommend-top"><span class="section-kicker">推荐出牌 · 攻守平衡</span><span class="risk-badge">${rec.risk}</span></div>
+    ${tag ? `<div class="plan-line"><span class="plan-badge">${tag}</span></div>` : ''}
+    <div class="recommend-main"><span class="hero-tile">${tileGlyph(rec.tile)}</span><div><h2>${tileLabel(rec.tile)}</h2><b>${rec.physicalPosition.text}</b></div></div>
+    <div class="decision-meta"><span><small>向听</small><b>${rec.shanten}</b></span>${quality}<span><small>未见有效牌</small><b>${rec.remainingCount} 张</b></span></div>
+    ${readLine ? `<div class="read-line">读牌：${readLine}</div>` : ''}
+    <button class="why-btn" id="why">为什么？</button></section>`;
 }
 function waitingCard(state) {
   const selfTurn = state.currentPlayer === 'self';
