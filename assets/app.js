@@ -222,6 +222,8 @@ function renderPlay() {
       <dialog class="sheet-dialog" id="event-log">${eventLogTemplate(state.events)}</dialog><dialog class="sheet-dialog" id="settings-dialog">${settingsTemplate(state)}</dialog><dialog class="sheet-dialog" id="why-dialog">${whyTemplate(recommendation)}</dialog><dialog class="confirm-dialog" id="confirm-dialog"></dialog><dialog class="tile-dialog" id="tile-picker"></dialog><div class="toast" id="toast" role="status"></div>
     </main>`;
   bindPlay(state);
+  // ?why=1 自动展开「为什么」，方便验收和截图
+  if (new URLSearchParams(location.search).get('why') && byId('why')) byId('why').click();
   if (camera.stream) camera.attach(byId('play-camera'));
   ensureSpeech();
 }
@@ -406,9 +408,48 @@ function settingsTemplate(state) {
 
 function whyTemplate(rec) {
   if (!rec) return '';
-  const profileNames = { UNKNOWN: '未知', NORMAL: '普通', MIXED_SUIT: '混一色倾向', PURE_SUIT: '清一色倾向', HONORS: '字一色倾向', ALL_TRIPLETS: '对对胡倾向' };
-  const opponentDetails = rec.candidates?.[0]?.opponents?.map((item) => `<div class="event-row"><span>${item.label}</span><div><b>${item.hardRonLock ? '活动荣和限制' : `相对损失指标 ${item.expectedLoss.toFixed(3)}`}</b><small>${escapeHtml(item.note)} · 副露方向 ${profileNames[item.profile] || '未知'} · 碰 ${item.pongPossible ? '可能' : '未见条件'} · 明杠 ${item.exposedKongPossible ? '可能' : '未见条件'}</small></div></div>`).join('') || '';
-  return `<div class="sheet-handle"></div><div class="sheet-head"><div><span class="section-kicker">DECISION</span><h3>为什么打${tileLabel(rec.tile)}？</h3></div><button class="icon-btn" data-close-dialog>×</button></div><div class="event-list"><p>${escapeHtml(rec.reason || '暂无说明')}</p><p>${escapeHtml(rec.uncertainty || '对手暗手未知，风险仅供参考。')}</p>${(rec.candidates || []).slice(0, 5).map((item) => `<div class="event-row"><span>${tileGlyph(item.tile)}</span><div><b>${tileLabel(item.tile)} · ${item.shanten} 向听 · 未见有效牌 ${item.remainingCount} 张</b><small>相对点炮损失指标 ${item.expectedRonLoss.toFixed(3)} · 仅供本局候选排序</small></div></div>`).join('')}${opponentDetails}<p>没有对手暗手或牌墙信息；旧牌河同牌不等于绝对安全。牌型叠加和最终结算尚未定义。</p></div>`;
+
+  const rows = (rec.candidates || []).slice(0, 5).map((item) => {
+    const isBest = item.tile === rec.tile;
+    // 方向分正负号要显式给出来，否则看不出「这张会拆牌」
+    const tag = item.planScore > 0 ? '<i class="c-good">顺方向</i>'
+      : item.planScore < 0 ? '<i class="c-bad">拆方向</i>' : '';
+    return `<div class="cand-row ${isBest ? 'best' : ''}">
+      <span class="c-glyph">${tileGlyph(item.tile)}</span>
+      <span class="c-name">${tileLabel(item.tile)}${isBest ? '<em>建议</em>' : ''}</span>
+      <span class="c-v">${item.shanten}向</span>
+      <span class="c-v">${item.shanten === 0 ? `${item.waitQuality || 0}活口` : `${item.remainingCount}张`}</span>
+      <span class="c-v">险 ${item.expectedRonLoss.toFixed(2)}</span>
+      <span class="c-tag">${tag}</span>
+    </div>`;
+  }).join('');
+
+  const opponents = (rec.candidates?.[0]?.opponents || []).map((o) => (
+    `<div class="event-row"><span>${o.label}</span><div><b>点炮估计 ${(o.ronEstimate * 100).toFixed(1)}%</b><small>${escapeHtml(o.note)}</small></div></div>`
+  )).join('');
+
+  const planLine = rec.plan && rec.plan.kind !== 'NORMAL'
+    ? `<p><b>当前主攻方向：</b>${escapeHtml(planLabel(rec.plan))}</p>` : '';
+
+  // 有时候建议的这张是「拆方向」，而顺方向的那张被排除了。
+  // 不解释一句，用户会觉得矛盾。
+  const aligned = (rec.candidates || []).find((c) => c.planScore > 0 && c.shanten > rec.shanten);
+  const conflictLine = aligned
+    ? `<p class="cand-conflict">没打${tileLabel(aligned.tile)}：它顺方向，但打完会掉到 ${aligned.shanten} 向听，按「听牌优先」规则排除。想做大就改打它。</p>`
+    : '';
+
+  return `<div class="sheet-handle"></div>
+    <div class="sheet-head"><div><span class="section-kicker">DECISION</span><h3>为什么打${tileLabel(rec.tile)}？</h3></div><button class="icon-btn" data-close-dialog>×</button></div>
+    <div class="event-list">
+      <p>${escapeHtml(rec.reason || '暂无说明')}</p>
+      ${planLine}
+      <div class="cand-head"><span>手牌</span><span>向听</span><span>进张</span><span>风险</span></div>
+      <div class="cand-table">${rows}</div>
+      ${conflictLine}
+      <p class="cand-note">排序规则：缺门优先 → 听牌优先 → 向听差≥2 看牌效 → 活口差≥3 倍不追番 → 番型方向 → 听口多 → 策略模式。牌墙剩 ${rec.wall ?? '?'} 张${rec.defend ? '，已进入弃和' : ''}。</p>
+      ${opponents}
+      <p>${escapeHtml(rec.uncertainty || '对手暗手未知，风险仅供参考。')}</p>
+    </div>`;
 }
 
 function renderVisionTest() {
