@@ -11,7 +11,7 @@
  */
 import { PLAYER_LABELS, tileLabel, isMissing, SUIT_CN, meldSlots } from './constants.js';
 import {
-  effectiveDraws, waitQuality, pureSuitPlan, tripletGroups, pairGroups,
+  shanten, effectiveDraws, waitQuality, pureSuitPlan, tripletGroups, pairGroups,
   sevenPairsPlan, tileCounts, codeToIndex,
 } from './HandAnalysis.js';
 import { RulesEngine } from './RulesEngine.js';
@@ -35,6 +35,7 @@ export class DecisionEngine {
     const missingInHand = missingSuit ? hand.filter((tile) => isMissing(tile, missingSuit)) : [];
     const pool = missingInHand.length ? [...new Set(missingInHand)] : [...new Set(hand)];
 
+    const wall = wallRemaining(gameState);
     const plan = buildPlan(hand, meldCount, missingSuit);
     const handCounts = tileCounts(hand);
 
@@ -73,6 +74,11 @@ export class DecisionEngine {
       };
     });
 
+    // 弃和要看「打完最好那张之后还能剩几向听」。
+    // 别用 14 张手牌直接算 —— 多一张会凑出假组面子，算出来偏小。
+    const minShanten = candidates.length ? Math.min(...candidates.map((c) => c.shanten)) : 8;
+    const defend = shouldDefendNow(gameState, wall, minShanten);
+
     const compare = (a, b) => {
       // 1. 缺门牌绝对优先
       if (a.isMissingTile !== b.isMissingTile) return a.isMissingTile ? -1 : 1;
@@ -83,7 +89,13 @@ export class DecisionEngine {
       const bWait = b.shanten === 0;
       if (aWait !== bWait) return aWait ? -1 : 1;
 
-      // 3. 向听差 2 以上，牌效说话
+      // 3. 弃和模式：牌快摸完、对手已经露牌、自己还差得多 —— 这一手只比安全
+      //    只要有一方能打到听牌，就不算弃和，走正常逻辑（有胡就该胡）
+      if (defend && a.shanten > 0 && b.shanten > 0) {
+        return a.expectedRonLoss - b.expectedRonLoss;
+      }
+
+      // 4. 向听差 2 以上，牌效说话
       const sh = a.shanten - b.shanten;
       if (Math.abs(sh) >= 2) return sh;
 
@@ -140,6 +152,8 @@ export class DecisionEngine {
       reason = `定缺${SUIT_CN[missingSuit] || ''}，手上还有 ${missingLeft} 张没打完，先把${tileLabel(best.tile)}打掉。`;
     } else if (best.shanten === 0) {
       reason = `已听牌，打${tileLabel(best.tile)}，${best.waitQuality} 张活口。`;
+    } else if (defend) {
+      reason = `牌墙只剩 ${wall} 张，有人已经露牌，这手改守：打${tileLabel(best.tile)}，优先不点炮。`;
     } else {
       reason = `打${tileLabel(best.tile)}后 ${best.shanten} 向听，未见有效牌 ${best.remainingCount} 张。${planText(plan)}`;
     }
@@ -153,6 +167,8 @@ export class DecisionEngine {
       usefulTiles: best.usefulTiles,
       remainingCount: best.remainingCount,
       waitQuality: best.waitQuality,
+      wall,
+      defend,
       missingLeft,
       canWin,
       winPatterns,
@@ -235,6 +251,45 @@ function inferMissingFromRiver(river) {
   if (ratio >= 0.6) return { suit, confidence: 0.85, ratio };
   if (ratio >= 0.4) return { suit, confidence: 0.55, ratio };
   return { suit: null, confidence: 0, ratio };
+}
+
+/**
+ * 牌墙还剩多少张。
+ *
+ * 108 张里扣掉：我占的（手牌 + 自己的副露）、四家牌河里还没被碰走的、
+ * 以及另外三家各 13 张（不管在手上还是摆在副露里，加起来恒为 39）。
+ *
+ * 开局 13 张、牌河空 → 108 - 13 - 0 - 39 = 56，和实际一致。
+ */
+function wallRemaining(state) {
+  const allMelds = state.melds || [];
+  const slotsOf = (actor) => allMelds
+    .filter((m) => m.actor === actor)
+    .reduce((n, m) => n + (m.type === 'KONG' ? 4 : 3), 0);
+
+  const mine = state.myHand.length + slotsOf('self');
+  // 被碰走的牌已经算进碰牌那家的副露里，牌河里要排掉，不然重复扣
+  const river = ['self', 'right', 'opposite', 'left'].reduce((n, actor) => (
+    n + (state.discardPiles?.[actor] || []).filter((d) => !d.claimed).length
+  ), 0);
+
+  return Math.max(0, 108 - mine - river - 39);
+}
+
+/**
+ * 该不该弃和。
+ *
+ * 三个条件同时成立才收手，宁可不弃也别乱弃：
+ *   牌墙 ≤ 20 张、自己还差 ≥ 2 步听牌、至少一家已经露了 2 组副露
+ * 剩下的人越少、牌越少，越该保命。
+ */
+function shouldDefendNow(state, wall, shantenNow) {
+  if (wall > 20) return false;
+  // 听牌或一向听还有得打，不弃。真要弃是「还差 2 步以上」那种局面。
+  if (shantenNow <= 1) return false;
+  const alive = ['right', 'opposite', 'left'].filter((a) => !(state.outPlayers || []).includes(a));
+  const threat = alive.filter((a) => (state.melds || []).filter((m) => m.actor === a).length >= 2);
+  return threat.length >= 1;
 }
 
 function opponentRisk(state, actor, tile, read) {

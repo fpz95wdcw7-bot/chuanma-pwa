@@ -1,0 +1,11 @@
+{
+  "name": "chuanma-pwa",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "川麻血战到底 PWA · 定缺向听 / 血战状态机 / 纯前端离线可用",
+  "scripts": {
+    "test": "node --test tests/core.test.mjs",
+    "serve": "python -m http.server 4180"
+  }
+}
