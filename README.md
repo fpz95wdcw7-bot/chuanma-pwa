@@ -23,6 +23,21 @@
 
 ---
 
+---
+
+## 改完怎么同步
+
+仓库在 `https://github.com/fpz95wdcw7-bot/chuanma-pwa`，上线地址 `https://fpz95wdcw7-bot.github.io/chuanma-pwa/`。
+
+改完代码在上层目录跑：
+
+```bash
+python deploy_chuanma.py -m "改了定缺判断"
+```
+
+脚本会比对本地和远端的 blob sha，只传有变化的文件。没配 SSH key 时自动走 GitHub API。
+
+
 ## 本地跑
 
 ```bash
