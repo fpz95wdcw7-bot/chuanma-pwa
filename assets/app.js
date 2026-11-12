@@ -6,7 +6,7 @@ import { DecisionEngine } from './core/DecisionEngine.js';
 import { EventStore } from './core/EventStore.js';
 import { GameStateEngine } from './core/GameStateEngine.js';
 import { RulesEngine } from './core/RulesEngine.js';
-import { EVENT_LABELS, INITIAL_HAND, MISSING_OPTIONS, PLAYER_LABELS, SUIT_CN, TILE_LABELS, tileGlyph, tileLabel } from './core/constants.js';
+import { EVENT_LABELS, INITIAL_HAND, MISSING_OPTIONS, PLAYER_LABELS, SUIT_CN, TILE_LABELS, meldSlots, tileGlyph, tileLabel } from './core/constants.js';
 
 const app = document.querySelector('#app');
 const APP_BASE = new URL('../', import.meta.url).pathname;
@@ -204,8 +204,8 @@ function renderPlay() {
   // 没有历史建议事件时，轮到自己且手牌够 14 张就直接算一次，不必先点模拟按钮
   let recommendation = state.lastRecommendation;
   if (!recommendation && !state.paused) {
-    const meldCount = state.melds.filter((meld) => meld.actor === 'self').length;
-    if (state.currentPlayer === 'self' && state.myHand.length === 14 - 3 * meldCount) {
+    const selfSlots = meldSlots(state.melds.filter((meld) => meld.actor === 'self'));
+    if (state.currentPlayer === 'self' && state.myHand.length === 14 - selfSlots) {
       try { recommendation = decision.analyze(state) || null; }
       catch (error) { console.warn('自动分析失败', error); }
     }
@@ -215,7 +215,7 @@ function renderPlay() {
       <header class="play-header"><div><span class="round-label">第 ${state.turn} 巡</span><small>${rulesEngine.getName()}</small></div><div class="header-actions"><button class="icon-btn" id="settings" aria-label="设置">⚙</button><button class="icon-btn ${state.paused ? 'active' : ''}" id="pause" aria-label="暂停">${state.paused ? '▶' : 'Ⅱ'}</button></div></header>
       <section class="table-zone" aria-label="牌桌状态">${playerSeat('opposite', state)}${playerSeat('left', state)}${playerSeat('right', state)}<div class="table-center"><span>当前</span><b>${PLAYER_LABELS[state.currentPlayer]}</b><i></i></div></section>
       <section class="hand-panel"><div class="panel-heading"><span><b>我的手牌</b><small>从左到右</small></span><strong>${state.myHand.length}<small> 张</small></strong></div><div class="hand-row">${state.myHand.map((tile, index) => tileButton(tile.code, index)).join('')}</div><div class="vision-line"><span class="camera-dot"></span><b>${setup.scan?.source === 'VISION' ? '初始手牌已人工确认' : '模拟初始手牌'}</b><span>摸牌/弃牌仍为模拟录入</span><video id="play-camera" muted playsinline></video></div></section>
-      ${recommendation && state.currentPlayer === 'self' && state.myHand.length === 14 - 3 * state.melds.filter((meld) => meld.actor === 'self').length ? recommendationCard(recommendation) : waitingCard(state)}
+      ${recommendation && state.currentPlayer === 'self' && state.myHand.length === 14 - meldSlots(state.melds.filter((meld) => meld.actor === 'self')) ? recommendationCard(recommendation) : waitingCard(state)}
       <section class="listen-panel"><div class="listen-state"><span class="listen-orb ${audio.active ? 'locked' : ''}">${audio.active ? '🔊' : '🎤'}</span><span><b>${audio.active ? '正在播报 · 语音录入已锁定' : speech.listening ? '正在监听' : '麦克风待启动'}</b><small>${runtime.lastMessage || `当前：${PLAYER_LABELS[state.currentPlayer]}${state.currentPlayer === 'self' ? '摸牌' : '出牌'}`}</small></span></div><form class="speech-input" id="speech-form"><input id="speech-text" autocomplete="off" placeholder="也可输入：七条 / 对家碰 / 撤销" aria-label="输入语音命令" /><button>记录</button></form><div class="sim-row">${simulationControls(state)}</div></section>
       <nav class="play-nav"><button id="undo"><span>↶</span>撤销</button><button id="correct"><span>✎</span>纠正</button><button id="log"><span>≡</span>记录</button><button id="end"><span>■</span>结束</button></nav>
       ${state.paused ? '<div class="pause-overlay"><div><span>Ⅱ</span><h2>牌局已暂停</h2><p>摄像头仍可预览，语音事件停止记录。</p><button class="primary-btn" id="resume">继续牌局</button></div></div>' : ''}
@@ -261,13 +261,12 @@ function recommendationCard(rec) {
 }
 function waitingCard(state) {
   const selfTurn = state.currentPlayer === 'self';
-  const target = 14 - 3 * state.melds.filter((meld) => meld.actor === 'self').length;
+  const target = 14 - meldSlots(state.melds.filter((meld) => meld.actor === 'self'));
   return `<section class="waiting-card"><span class="waiting-icon">${selfTurn ? '◫' : '···'}</span><div><span class="section-kicker">${selfTurn ? '等待摸牌' : '牌桌进行中'}</span><h3>${selfTurn ? '请用模拟按钮录入摸牌' : `等待${PLAYER_LABELS[state.currentPlayer]}出牌`}</h3><p>${selfTurn ? `实时时序检测尚未接入；目前只支持照片识别初始 ${target - 1} 张。` : '只需说出牌名，系统会自动归属当前玩家。'}</p></div></section>`;
 }
 function simulationControls(state) {
-  const meldCount = state.melds.filter((meld) => meld.actor === 'self').length;
-  if (state.currentPlayer === 'self' && state.myHand.length === 13 - 3 * meldCount) return '<button type="button" data-sim="draw">模拟摸八筒</button>';
-  if (state.currentPlayer === 'self' && state.myHand.length === 14 - 3 * meldCount) return `<button type="button" data-sim="discard" data-tile="${state.lastRecommendation?.tile || state.myHand.at(-1)?.code}">模拟按建议出牌</button><button type="button" data-sim="discard" data-tile="6m">模拟改打六万</button>`;
+  if (state.currentPlayer === 'self' && state.myHand.length === 13 - meldSlots(state.melds.filter((m) => m.actor === 'self'))) return '<button type="button" data-sim="draw">模拟摸八筒</button>';
+  if (state.currentPlayer === 'self' && state.myHand.length === 14 - meldSlots(state.melds.filter((m) => m.actor === 'self'))) return `<button type="button" data-sim="discard" data-tile="${state.lastRecommendation?.tile || state.myHand.at(-1)?.code}">模拟按建议出牌</button><button type="button" data-sim="discard" data-tile="6m">模拟改打六万</button>`;
   return '<button type="button" data-sim="sequence">演示下一步</button><button type="button" data-sim="call">模拟碰牌</button>';
 }
 function bindPlay(state) {

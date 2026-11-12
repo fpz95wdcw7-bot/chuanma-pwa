@@ -67,3 +67,8 @@ export function tileGlyph(code) { return TILE_GLYPHS[code] || '◻'; }
 
 export function suitOf(code) { return code ? code.at(-1) : ''; }
 export function isMissing(code, missingSuit) { return Boolean(missingSuit) && suitOf(code) === missingSuit; }
+
+/** 副露占用的手牌位：碰占 3 张，杠占 4 张（杠后要补一张，所以手牌少一张） */
+export function meldSlots(melds) {
+  return (melds || []).reduce((n, m) => n + (m.type === 'KONG' ? 4 : 3), 0);
+}

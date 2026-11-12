@@ -1,4 +1,4 @@
-import { INITIAL_HAND, NEXT_PLAYER, PLAYERS, TILE_LABELS } from './constants.js';
+import { INITIAL_HAND, NEXT_PLAYER, PLAYERS, TILE_LABELS, meldSlots } from './constants.js';
 import { RULE_PROFILE } from './RulesEngine.js';
 
 const emptyDiscards = () => ({ self: [], right: [], opposite: [], left: [] });
@@ -170,7 +170,8 @@ export class GameStateEngine {
     this.assertActive();
     this.assertTile(tile);
     const meldCount = this.state.melds.filter((meld) => meld.actor === 'self').length;
-    if (this.state.currentPlayer !== 'self' || this.state.myHand.length !== 13 - 3 * meldCount) throw new Error('当前不是可摸牌状态');
+    const slotUsed = meldSlots(this.state.melds.filter((m) => m.actor === 'self'));
+    if (this.state.currentPlayer !== 'self' || this.state.myHand.length !== 13 - slotUsed) throw new Error('当前不是可摸牌状态');
     this.assertAvailable(tile);
     return this.store.append({ actor: 'self', type: 'DRAW', tile, source, confidence: source === 'VISION' ? 0.95 : 1 });
   }

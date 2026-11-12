@@ -9,7 +9,7 @@
  * 番型方向只在「有明确迹象」时才生效（对子够多、主色够纯），
  * 模糊的时候返回 NORMAL，不干预排序 —— 猜错比不猜更糟。
  */
-import { PLAYER_LABELS, tileLabel, isMissing, SUIT_CN } from './constants.js';
+import { PLAYER_LABELS, tileLabel, isMissing, SUIT_CN, meldSlots } from './constants.js';
 import {
   effectiveDraws, waitQuality, pureSuitPlan, tripletGroups, pairGroups,
   sevenPairsPlan, tileCounts, codeToIndex,
@@ -20,8 +20,10 @@ export class DecisionEngine {
   constructor(rules = new RulesEngine()) { this.rules = rules; }
 
   analyze(gameState) {
-    const meldCount = gameState.melds.filter((meld) => meld.actor === 'self').length;
-    if (gameState.currentPlayer !== 'self' || gameState.myHand.length !== 14 - 3 * meldCount) return null;
+    const selfMeldsAll = gameState.melds.filter((meld) => meld.actor === 'self');
+    const meldCount = selfMeldsAll.length;                 // 组数，给向听算法用
+    const slotUsed = meldSlots(selfMeldsAll);              // 手牌位，碰 3 杠 4
+    if (gameState.currentPlayer !== 'self' || gameState.myHand.length !== 14 - slotUsed) return null;
     this.rules.validatePublicState(gameState);
 
     const missingSuit = gameState.missingSuit || null;
